@@ -18,7 +18,3 @@ export function formatNumber(n) {
   return shown + SUFFIXES[tier];
 }
 
-// Income per second shows one decimal while small.
-export function formatRate(n) {
-  return n < 100 ? n.toFixed(1).replace(/\.0$/, '') : formatNumber(n);
-}

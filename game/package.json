@@ -1,9 +1,9 @@
 {
-  "name": "merge-command",
+  "name": "squad-rush",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Merge-army browser game built with Phaser 3.",
+  "description": "Squad runner-shooter browser game built with Phaser 3.",
   "scripts": {
     "start": "python3 -m http.server 8080",
     "test": "node --test tests/*.test.js"

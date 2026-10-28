@@ -1,55 +1,44 @@
-// Visual identity: sunlit desert base camp. Khaki sand field, olive command bar, signal-orange actions.
+// Bright toy-army look: a pale concrete bridge over teal water, blue squad vs red raiders.
 
 export const COLORS = {
-  sand: 0xd8c79c,
-  sandDark: 0xc4b07f,
-  tile: 0xcbb683,
-  tileShade: 0xb39d68,
-  olive: 0x2f3a25,
-  oliveLight: 0x4a5a3a,
-  ink: 0x22281b,
-  paper: 0xf6f1e3,
-  gold: 0xf2c14e,
-  goldDark: 0xb8861f,
-  signal: 0xf28c28,
-  signalDark: 0xb5601a,
-  disabled: 0x9a9480,
-  disabledDark: 0x726d5c,
-  danger: 0xc0473a,
-  mergeGlow: 0x7fd36b,
-  skin: 0xf1c79b,
+  water: 0x3fa7c9,
+  waterLight: 0x7fd0e6,
+  road: 0xd3d6db,
+  roadEdge: 0xb4b9c1,
+  rail: 0x7d8590,
+  dash: 0xffffff,
+  blue: 0x2f6fd0,
+  blueHelmet: 0x45b4ff,
+  blueDark: 0x1d4f8f,
+  red: 0xe2483d,
+  redDark: 0x9e2a22,
+  beige: 0xf2e3cf,
+  beigeDark: 0xc9b597,
+  gunmetal: 0x3b4048,
+  bullet: 0xffe27a,
+  ice: 0xbfeaff,
+  iceEdge: 0x7cc8ec,
+  glass: 0xd6f3ff,
+  lid: 0x4a7fa8,
+  ink: 0x1f2a36,
+  white: 0xffffff,
+  good: 0x52c46b,
+  hud: 0x1f2a36,
 };
 
 export const CSS = {
-  paper: '#f6f1e3',
-  ink: '#22281b',
-  gold: '#f2c14e',
-  olive: '#2f3a25',
-  oliveMuted: '#c9d1b4',
-  danger: '#c0473a',
+  ink: '#1f2a36',
+  white: '#ffffff',
+  yellow: '#ffd34d',
+  blue: '#1d4f8f',
+  red: '#e2483d',
+  green: '#3fae5a',
+  muted: '#b9c6d3',
 };
 
 export const FONTS = {
-  display: '"Saira Stencil One", "Arial Black", Impact, sans-serif',
-  body: '"Barlow Condensed", "Arial Narrow", Arial, sans-serif',
+  display: '"Lilita One", "Arial Black", Impact, sans-serif',
+  body: '"Nunito", "Trebuchet MS", Arial, sans-serif',
 };
-
-// Unit plate color changes every three levels so progress reads at a glance.
-const TIERS = [
-  0x7f8f4e, // 1-3 field olive
-  0x5b8bb0, // 4-6 steel
-  0x7d5ba6, // 7-9 violet
-  0x2a9d8f, // 10-12 teal
-  0xc0473a, // 13-15 crimson
-  0x3d4a7a, // 16-18 navy
-  0xd08a2c, // 19-21 bronze
-  0x8e2f5a, // 22-24 maroon
-  0xd4af37, // 25-27 gold
-  0x1f1f24, // 28-30 black ops
-];
-
-export function tierColor(level) {
-  return TIERS[Math.min(Math.floor((level - 1) / 3), TIERS.length - 1)];
-}
 
 export const TEXT_RESOLUTION = Math.min(window.devicePixelRatio || 1, 2);
