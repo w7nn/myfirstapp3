@@ -34,6 +34,22 @@ export function createTextures(scene) {
     g.fillStyle(COLORS.white, 0.55).fillCircle(20, 18, 4);
   });
 
+  // The stage boss: a giant armoured raider with twin guns.
+  bake(scene, 'boss', 160, 170, (g) => {
+    g.fillStyle(0x000000, 0.2).fillEllipse(80, 140, 140, 40);
+    g.fillStyle(COLORS.gunmetal).fillRect(30, 90, 12, 72).fillRect(118, 90, 12, 72);
+    g.fillStyle(COLORS.beige).fillEllipse(80, 96, 150, 92);
+    g.lineStyle(4, COLORS.beigeDark).strokeEllipse(80, 96, 150, 92);
+    g.fillStyle(COLORS.red).fillRoundedRect(14, 74, 40, 40, 12).fillRoundedRect(106, 74, 40, 40, 12);
+    g.fillStyle(COLORS.redDark).fillRect(40, 108, 80, 14);
+    g.fillStyle(COLORS.white).fillTriangle(48, 50, 34, 12, 62, 40).fillTriangle(112, 50, 126, 12, 98, 40);
+    g.fillStyle(COLORS.red).fillCircle(80, 70, 38);
+    g.lineStyle(4, COLORS.redDark).strokeCircle(80, 70, 38);
+    g.fillStyle(COLORS.ink).fillRoundedRect(52, 70, 56, 14, 7);
+    g.fillStyle(COLORS.bullet).fillCircle(66, 77, 4).fillCircle(94, 77, 4);
+    g.fillStyle(COLORS.white, 0.5).fillCircle(66, 50, 9);
+  });
+
   bake(scene, 'bullet', 12, 26, (g) => {
     g.fillStyle(COLORS.bullet, 0.45).fillEllipse(6, 13, 12, 26);
     g.fillStyle(COLORS.white).fillEllipse(6, 11, 5, 16);

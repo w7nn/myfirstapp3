@@ -2,6 +2,7 @@
 
 import {
   VIEW, ROAD, ROAD_CENTER, SCROLL_SPEED, SQUAD, WEAPON, SIZES, SCORE, PX_PER_METRE, BLOCK_CRUSH, difficulty,
+  STAGE, BOSS, GATE, gateOptions, applyGate, clampCount,
 } from './config.js';
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -54,10 +55,25 @@ export class Sim {
     this.blocks = [];
     this.capsules = [];
     this.bullets = [];
+    this.gates = [];
+    this.boss = null;
     this.events = [];
     this.nextId = 1;
     this.fireAccumulator = 0;
-    this.timers = { enemy: 1.2, block: 5, capsule: 2.5 };
+    this.stage = 1;
+    this.startStage();
+  }
+
+  // phase: 'run' (normal spawns), 'boss' (boss fight, no spawns), 'clear' (short calm after a boss).
+  startStage() {
+    this.phase = 'run';
+    this.stageTime = 0;
+    this.timers = { enemy: 1.2, block: 5, capsule: 2.5, gate: GATE.first };
+  }
+
+  // 0 at the start of a stage, 1 when the boss arrives.
+  get stageProgress() {
+    return this.phase === 'run' ? Math.min(this.stageTime / STAGE.runSeconds, 1) : 1;
   }
 
   get metres() {
@@ -93,6 +109,19 @@ export class Sim {
     return capsule;
   }
 
+  // options: [left, right] gate effects, e.g. [{ op: '+', n: 8 }, { op: '−', n: 5 }]
+  spawnGates(y, options = gateOptions(this.time, this.rng)) {
+    const gate = { id: this.nextId++, y, options, used: false, chosen: null };
+    this.gates.push(gate);
+    return gate;
+  }
+
+  spawnBoss(y = -BOSS.radius * 2) {
+    const hp = BOSS.hp(this.stage);
+    this.boss = { id: this.nextId++, x: ROAD_CENTER, y, hp, maxHp: hp, hitTimer: 0, onSquad: false };
+    return this.boss;
+  }
+
   randomLaneX(width) {
     return ROAD.left + width / 2 + this.rng() * (ROAD.right - ROAD.left - width);
   }
@@ -102,7 +131,15 @@ export class Sim {
     this.timers.enemy -= dt;
     this.timers.block -= dt;
     this.timers.capsule -= dt;
+    this.timers.gate -= dt;
 
+    if (this.timers.gate <= 0) {
+      this.timers.gate += GATE.every;
+      this.spawnGates(-GATE.height);
+      // Keep jars and ice from landing on top of the gates.
+      this.timers.block = Math.max(this.timers.block, GATE.clearance);
+      this.timers.capsule = Math.max(this.timers.capsule, GATE.clearance);
+    }
     if (this.timers.enemy <= 0) {
       this.timers.enemy += d.spawnEvery;
       const size = Math.ceil(d.maxGroup / 2) + Math.floor(this.rng() * Math.ceil(d.maxGroup / 2));
@@ -136,7 +173,8 @@ export class Sim {
     const maxMove = SQUAD.moveSpeed * dt;
     this.squad.x += clamp(goal - this.squad.x, -maxMove, maxMove);
 
-    if (this.autoSpawn) this.runSpawners(dt);
+    this.advancePhase(dt);
+    if (this.autoSpawn && this.phase === 'run') this.runSpawners(dt);
     this.fire(dt);
 
     for (const b of this.bullets) b.y -= WEAPON.bulletSpeed * dt;
@@ -147,15 +185,73 @@ export class Sim {
     }
     for (const o of this.blocks) o.y += SCROLL_SPEED * dt;
     for (const o of this.capsules) o.y += SCROLL_SPEED * dt;
+    for (const g of this.gates) g.y += SCROLL_SPEED * dt;
+    this.moveBoss(dt);
 
     this.resolveBullets();
+    this.resolveGates();
     this.resolveSquadContact();
+    this.resolveBoss(dt);
     this.cull();
 
     if (this.squad.count <= 0) {
       this.squad.count = 0;
       this.over = true;
       this.events.push({ type: 'gameover' });
+    }
+  }
+
+  advancePhase(dt) {
+    if (this.phase === 'run') {
+      this.stageTime += dt;
+      if (this.stageTime >= STAGE.runSeconds && this.autoSpawn) {
+        this.phase = 'boss';
+        this.spawnBoss();
+        this.events.push({ type: 'bossIncoming', stage: this.stage });
+      }
+    } else if (this.phase === 'clear') {
+      this.clearTimer -= dt;
+      if (this.clearTimer <= 0) {
+        this.stage += 1;
+        this.startStage();
+        this.events.push({ type: 'stageStarted', stage: this.stage });
+      }
+    }
+  }
+
+  moveBoss(dt) {
+    const boss = this.boss;
+    if (!boss) return;
+    boss.x += clamp((this.squad.x - boss.x) * 1.5, -BOSS.steer, BOSS.steer) * dt;
+    boss.x = clamp(boss.x, ROAD.left + BOSS.radius, ROAD.right - BOSS.radius);
+    // It marches until it is standing on the squad, then stays there.
+    const stopY = SQUAD.y - (squadRadius(this.squad.count) + BOSS.radius) * 0.7;
+    boss.y = Math.min(boss.y + (SCROLL_SPEED + BOSS.speed) * dt, stopY);
+    boss.onSquad = boss.y >= stopY;
+  }
+
+  resolveBoss(dt) {
+    const boss = this.boss;
+    if (!boss || !boss.onSquad || this.squad.count <= 0) return;
+    boss.hitTimer -= dt;
+    while (boss.hitTimer <= 0 && this.squad.count > 0) {
+      boss.hitTimer += BOSS.hitInterval;
+      const lost = Math.min(BOSS.crush(this.stage), this.squad.count);
+      this.squad.count -= lost;
+      this.events.push({ type: 'soldierLost', x: this.squad.x, y: SQUAD.y, amount: lost });
+    }
+  }
+
+  // A gate pair takes effect when it reaches the squad's line.
+  resolveGates() {
+    for (const gate of this.gates) {
+      if (gate.used || gate.y < SQUAD.y) continue;
+      gate.used = true;
+      gate.chosen = this.squad.x < ROAD_CENTER ? 0 : 1;
+      const option = gate.options[gate.chosen];
+      const before = this.squad.count;
+      this.squad.count = applyGate(before, option);
+      this.events.push({ type: 'gatePassed', gateId: gate.id, side: gate.chosen, option, change: this.squad.count - before });
     }
   }
 
@@ -178,12 +274,16 @@ export class Sim {
       let hit = this.enemies.find((e) => e.hp > 0 && (e.x - b.x) ** 2 + (e.y - b.y) ** 2 <= enemyReach);
       hit ??= this.blocks.find((o) => o.hp > 0 && circleHitsRect(b.x, b.y, r, o));
       hit ??= this.capsules.find((o) => o.hp > 0 && circleHitsRect(b.x, b.y, r, o));
+      const boss = this.boss;
+      if (!hit && boss && boss.hp > 0 && (boss.x - b.x) ** 2 + (boss.y - b.y) ** 2 <= (BOSS.radius + r) ** 2) hit = boss;
       if (!hit) continue;
       b.dead = true;
       hit.hp -= damage;
       if (hit.hp > 0) continue;
 
-      if (this.enemies.includes(hit)) {
+      if (hit === this.boss) {
+        this.defeatBoss();
+      } else if (this.enemies.includes(hit)) {
         this.kills += 1;
         this.bonusScore += SCORE.enemy;
         this.events.push({ type: 'enemyKilled', x: hit.x, y: hit.y });
@@ -192,11 +292,23 @@ export class Sim {
         this.bonusScore += SCORE.block;
         this.events.push({ type: 'blockBroken', x: hit.x, y: hit.y, level: this.weaponLevel });
       } else {
-        this.squad.count += hit.reward;
+        this.squad.count = clampCount(this.squad.count + hit.reward);
         this.bonusScore += SCORE.capsule;
         this.events.push({ type: 'rescued', x: hit.x, y: hit.y, amount: hit.reward });
       }
     }
+  }
+
+  defeatBoss() {
+    const { x, y } = this.boss;
+    const rescued = BOSS.rescue(this.stage);
+    const bonus = SCORE.bossPerStage * this.stage;
+    this.boss = null;
+    this.squad.count = clampCount(this.squad.count + rescued);
+    this.bonusScore += bonus;
+    this.phase = 'clear';
+    this.clearTimer = STAGE.clearPause;
+    this.events.push({ type: 'bossDefeated', x, y, stage: this.stage, rescued, bonus });
   }
 
   resolveSquadContact() {
@@ -227,6 +339,7 @@ export class Sim {
     this.enemies = this.enemies.filter(alive);
     this.blocks = this.blocks.filter(alive);
     this.capsules = this.capsules.filter(alive);
+    this.gates = this.gates.filter((g) => g.y < bottom);
     this.bullets = this.bullets.filter((b) => !b.dead && b.y > -40);
   }
 

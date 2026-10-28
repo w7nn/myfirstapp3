@@ -1,4 +1,4 @@
-import { VIEW, ROAD_CENTER, SCROLL_SPEED, SQUAD, BEST_SCORE_KEY } from '../config.js';
+import { VIEW, ROAD, ROAD_CENTER, SCROLL_SPEED, SQUAD, GATE, BEST_SCORE_KEY } from '../config.js';
 import { Sim, formationSlot, squadRadius } from '../sim.js';
 import { formatNumber } from '../format.js';
 import { COLORS, CSS, FONTS, TEXT_RESOLUTION } from '../theme.js';
@@ -10,7 +10,11 @@ const DRAG_GAIN = 1.2; // finger movement -> squad movement
 const SOLDIER_SCALE = 1.25;
 const ENEMY_SCALE = 1.2;
 
-const DEPTH = { road: 0, pickups: 10, bullets: 15, enemies: 20, squad: 30, fx: 40, hud: 100, panel: 200 };
+const DEPTH = { road: 0, gates: 5, pickups: 10, bullets: 15, enemies: 20, boss: 25, squad: 30, fx: 40, banner: 90, hud: 100, panel: 200 };
+
+// Display text for a gate option. En dash because the display font has no minus sign.
+const GATE_SYMBOL = { '+': '+', '−': '–', '×': '×', '÷': '÷' };
+const isGoodGate = (option) => option.op === '+' || option.op === '×';
 
 function text(scene, x, y, value, style) {
   return scene.add.text(x, y, value, { resolution: TEXT_RESOLUTION, ...style });
@@ -54,6 +58,7 @@ export class GameScene extends Phaser.Scene {
 
     this.createFx();
     this.createHud();
+    this.createBanner();
     this.createSquadLabel();
     this.createPanels();
     this.setupInput();
@@ -134,7 +139,7 @@ export class GameScene extends Phaser.Scene {
         view = make(entity);
         this.views.set(entity.id, view);
       }
-      view.setPosition(entity.x, entity.y);
+      view.setPosition(entity.x ?? 0, entity.y);
       update?.(view, entity);
     };
 
@@ -142,6 +147,8 @@ export class GameScene extends Phaser.Scene {
     for (const e of this.sim.enemies) place(e, () => this.add.image(0, 0, 'enemy').setScale(ENEMY_SCALE).setDepth(DEPTH.enemies));
     for (const o of this.sim.blocks) place(o, () => this.makeBlock(), (view, block) => view.getData('hp').setText(Math.ceil(block.hp)));
     for (const o of this.sim.capsules) place(o, (c) => this.makeCapsule(c), (view, c) => this.paintCapsuleBar(view, c));
+    for (const g of this.sim.gates) place(g, (gate) => this.makeGate(gate));
+    if (this.sim.boss) place(this.sim.boss, () => this.add.image(0, 0, 'boss').setDepth(DEPTH.boss), (view, boss) => this.animateBoss(view, boss));
 
     for (const [id, view] of this.views) {
       if (!seen.has(id)) {
@@ -168,6 +175,42 @@ export class GameScene extends Phaser.Scene {
     const c = this.add.container(0, 0, [ice, gun, hp]).setDepth(DEPTH.pickups);
     c.setData('hp', hp);
     return c;
+  }
+
+  makeGate(gate) {
+    const half = (ROAD.right - ROAD.left) / 2;
+    const h = GATE.height;
+    const parts = [];
+    const panels = gate.options.map((option, side) => {
+      const color = isGoodGate(option) ? COLORS.good : COLORS.red;
+      const cx = ROAD.left + half * side + half / 2;
+      const g = this.add.graphics().setPosition(cx, 0);
+      g.fillStyle(color, 0.45).fillRect(-half / 2 + 6, -h / 2, half - 12, h);
+      g.fillStyle(color, 0.95).fillRect(-half / 2 + 6, -h / 2, half - 12, 14);
+      g.lineStyle(4, COLORS.white, 0.8).strokeRect(-half / 2 + 6, -h / 2, half - 12, h);
+      const label = text(this, cx, 8, `${GATE_SYMBOL[option.op]}${option.n}`, {
+        fontFamily: FONTS.display, fontSize: '64px', color: CSS.white, stroke: CSS.ink, strokeThickness: 10,
+      }).setOrigin(0.5);
+      parts.push(g, label);
+      return { g, label };
+    });
+    const posts = this.add.graphics();
+    posts.fillStyle(COLORS.ink);
+    for (const x of [ROAD.left, ROAD_CENTER, ROAD.right]) posts.fillRoundedRect(x - 7, -h / 2 - 14, 14, h + 22, 6);
+    parts.push(posts);
+    const c = this.add.container(0, gate.y, parts).setDepth(DEPTH.gates);
+    c.setData('panels', panels);
+    return c;
+  }
+
+  animateBoss(view, boss) {
+    // Waddle while walking, flash when hit.
+    const t = this.time.now;
+    view.setScale(1 + 0.04 * Math.sin(t / 110), 1 - 0.04 * Math.sin(t / 110));
+    view.setAngle(boss.onSquad ? 4 * Math.sin(t / 50) : 3 * Math.sin(t / 180));
+    if (boss.hp < (view.getData('lastHp') ?? boss.hp)) view.setTint(0xffb0a8);
+    else view.clearTint();
+    view.setData('lastHp', boss.hp);
   }
 
   makeCapsule(capsule) {
@@ -262,10 +305,54 @@ export class GameScene extends Phaser.Scene {
         this.fx.hurt.explode(16, this.sim.squad.x, SQUAD.y);
         this.floatText(this.sim.squad.x, SQUAD.y - 80, `-${e.amount}`, CSS.red);
         this.cameras.main.shake(200, 0.008);
+      } else if (e.type === 'gatePassed') {
+        this.celebrateGate(e);
+      } else if (e.type === 'bossIncoming') {
+        this.showBanner('BOSS INCOMING!', CSS.red, 1800, true);
+        this.cameras.main.shake(300, 0.006);
+      } else if (e.type === 'bossDefeated') {
+        this.fx.enemy.explode(60, e.x, e.y);
+        this.fx.rescue.explode(40, e.x, e.y);
+        this.cameras.main.shake(400, 0.012);
+        this.floatText(e.x, e.y, `+${e.rescued}`, CSS.white);
+        this.showBanner(`STAGE ${e.stage} CLEAR!`, CSS.yellow, 2200);
+      } else if (e.type === 'stageStarted') {
+        this.showBanner(`STAGE ${e.stage}`, CSS.white, 1400);
       } else if (e.type === 'gameover') {
         this.showGameOver();
       }
     }
+  }
+
+  celebrateGate(e) {
+    const view = this.views.get(e.gateId);
+    view?.getData('panels').forEach((panel, side) => {
+      if (side === e.side) {
+        this.tweens.add({ targets: panel.label, scale: 1.5, duration: 160, yoyo: true });
+      } else {
+        panel.g.setAlpha(0.25);
+        panel.label.setAlpha(0.35);
+      }
+    });
+    const good = e.change >= 0;
+    const sign = good ? '+' : '–';
+    this.floatText(this.sim.squad.x, SQUAD.y - 110, `${sign}${Math.abs(e.change)}`, good ? CSS.green : CSS.red);
+    (good ? this.fx.rescue : this.fx.hurt).explode(24, this.sim.squad.x, SQUAD.y - 40);
+    if (!good) this.cameras.main.shake(150, 0.006);
+  }
+
+  createBanner() {
+    this.banner = text(this, VIEW.width / 2, 560, '', {
+      fontFamily: FONTS.display, fontSize: '62px', color: CSS.white, stroke: CSS.ink, strokeThickness: 10, align: 'center',
+    }).setOrigin(0.5).setDepth(DEPTH.banner).setAlpha(0);
+  }
+
+  showBanner(message, color, hold, pulse = false) {
+    this.tweens.killTweensOf(this.banner);
+    this.banner.setText(message).setColor(color).setAlpha(1).setScale(0.4);
+    this.tweens.add({ targets: this.banner, scale: 1, duration: 260, ease: 'Back.easeOut' });
+    if (pulse) this.tweens.add({ targets: this.banner, alpha: 0.35, duration: 220, yoyo: true, repeat: Math.floor(hold / 440), delay: 260 });
+    this.tweens.add({ targets: this.banner, alpha: 0, duration: 400, delay: hold });
   }
 
   floatText(x, y, message, color) {
@@ -285,7 +372,7 @@ export class GameScene extends Phaser.Scene {
 
     const cols = [
       ['SCORE', 44, 0],
-      ['DISTANCE', VIEW.width / 2, 0.5],
+      ['STAGE', VIEW.width / 2, 0.5],
       ['GUN', VIEW.width - 44, 1],
     ];
     this.hud = {};
@@ -293,17 +380,42 @@ export class GameScene extends Phaser.Scene {
       text(this, x, 28, name, label).setOrigin(align, 0).setDepth(DEPTH.hud);
       this.hud[name] = text(this, x, 52, '', value).setOrigin(align, 0).setDepth(DEPTH.hud);
     }
+
+    // Stage progress toward the boss; turns into the boss's health bar during the fight.
+    this.progress = this.add.graphics().setDepth(DEPTH.hud);
+    this.progressLabel = text(this, VIEW.width / 2, 142, '', {
+      fontFamily: FONTS.display, fontSize: '22px', color: CSS.white, stroke: CSS.ink, strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(DEPTH.hud + 1);
+  }
+
+  drawProgress() {
+    const w = 440;
+    const x = (VIEW.width - w) / 2;
+    const y = 124;
+    const g = this.progress.clear();
+    const boss = this.sim.boss;
+    g.fillStyle(COLORS.ink, 0.7).fillRoundedRect(x - 4, y - 4, w + 8, 26, 13);
+    if (boss) {
+      g.fillStyle(COLORS.red).fillRoundedRect(x, y, Math.max(w * (boss.hp / boss.maxHp), 0), 18, 9);
+      this.progressLabel.setText(`BOSS  ${formatNumber(Math.ceil(boss.hp))}`);
+    } else {
+      g.fillStyle(COLORS.bullet).fillRoundedRect(x, y, Math.max(w * this.sim.stageProgress, 18), 18, 9);
+      g.fillStyle(COLORS.red).fillCircle(x + w + 4, y + 9, 16);
+      g.lineStyle(3, COLORS.white).strokeCircle(x + w + 4, y + 9, 16);
+      this.progressLabel.setText('');
+    }
   }
 
   refreshHud() {
     const values = {
       SCORE: formatNumber(this.sim.score),
-      DISTANCE: `${formatNumber(this.sim.metres)} m`,
+      STAGE: String(this.sim.stage),
       GUN: `Lv ${this.sim.weaponLevel}`,
     };
     for (const [name, v] of Object.entries(values)) {
       if (this.hud[name].text !== v) this.hud[name].setText(v);
     }
+    this.drawProgress();
   }
 
   createSquadLabel() {
@@ -322,28 +434,28 @@ export class GameScene extends Phaser.Scene {
     const body = { fontFamily: FONTS.body, fontSize: '30px', fontStyle: '800', color: CSS.ink, align: 'center' };
 
     const readyShade = this.add.rectangle(0, 0, VIEW.width, VIEW.height, COLORS.white, 0.35).setOrigin(0);
-    const readyTitle = text(this, cx, 420, 'SQUAD RUSH', title).setOrigin(0.5);
-    const readyHint = text(this, cx, 540, 'Drag left and right to aim.\nYour squad fires on its own.\n\nShoot jars to rescue soldiers.\nBreak ice for a better gun.', body)
+    const readyTitle = text(this, cx, 370, 'SQUAD RUSH', title).setOrigin(0.5);
+    const readyHint = text(this, cx, 470, 'Drag left and right to aim.\nYour squad fires on its own.\n\nRun through the better gate.\nShoot jars to rescue soldiers.\nBreak ice for a better gun.\nBeat the boss to clear the stage.', body)
       .setOrigin(0.5, 0);
-    this.readyCta = text(this, cx, 820, 'TAP TO START', {
+    this.readyCta = text(this, cx, 880, 'TAP TO START', {
       fontFamily: FONTS.display, fontSize: '52px', color: CSS.yellow, stroke: CSS.ink, strokeThickness: 10,
     }).setOrigin(0.5);
-    this.readyBest = text(this, cx, 900, '', { ...body, fontSize: '26px' }).setOrigin(0.5);
+    this.readyBest = text(this, cx, 960, '', { ...body, fontSize: '26px' }).setOrigin(0.5);
     this.readyPanel = this.add.container(0, 0, [readyShade, readyTitle, readyHint, this.readyCta, this.readyBest]).setDepth(DEPTH.panel);
     this.tweens.add({ targets: this.readyCta, scale: 1.08, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 
     const overShade = this.add.rectangle(0, 0, VIEW.width, VIEW.height, COLORS.ink, 0.72).setOrigin(0);
     const card = this.add.graphics();
-    card.fillStyle(COLORS.white).fillRoundedRect(cx - 270, 380, 540, 520, 36);
+    card.fillStyle(COLORS.white).fillRoundedRect(cx - 270, 380, 540, 560, 36);
     const overTitle = text(this, cx, 380, 'SQUAD LOST', { ...title, fontSize: '72px', stroke: CSS.red }).setOrigin(0.5);
-    this.overStats = text(this, cx, 470, '', { ...body, fontSize: '32px', lineSpacing: 14 }).setOrigin(0.5, 0);
+    this.overStats = text(this, cx, 460, '', { ...body, fontSize: '32px', lineSpacing: 14 }).setOrigin(0.5, 0);
     const button = this.add.graphics();
-    button.fillStyle(0xb5601a).fillRoundedRect(cx - 190, 768, 380, 100, 30);
-    button.fillStyle(0xf28c28).fillRoundedRect(cx - 190, 760, 380, 100, 30);
-    const buttonText = text(this, cx, 810, 'PLAY AGAIN', {
+    button.fillStyle(0xb5601a).fillRoundedRect(cx - 190, 808, 380, 100, 30);
+    button.fillStyle(0xf28c28).fillRoundedRect(cx - 190, 800, 380, 100, 30);
+    const buttonText = text(this, cx, 850, 'PLAY AGAIN', {
       fontFamily: FONTS.display, fontSize: '48px', color: CSS.white, stroke: '#b5601a', strokeThickness: 6,
     }).setOrigin(0.5);
-    const hit = this.add.zone(cx - 190, 760, 380, 108).setOrigin(0).setInteractive({ useHandCursor: true });
+    const hit = this.add.zone(cx - 190, 800, 380, 108).setOrigin(0).setInteractive({ useHandCursor: true });
     hit.on('pointerup', () => this.mode === 'over' && this.startRun());
     this.overPanel = this.add.container(0, 0, [overShade, card, overTitle, this.overStats, button, buttonText, hit])
       .setDepth(DEPTH.panel)
@@ -366,6 +478,7 @@ export class GameScene extends Phaser.Scene {
       [
         `Score  ${formatNumber(score)}${isRecord ? '  NEW BEST!' : ''}`,
         `Best  ${formatNumber(this.best)}`,
+        `Stage reached  ${this.sim.stage}`,
         `Distance  ${formatNumber(this.sim.metres)} m`,
         `Raiders stopped  ${formatNumber(this.sim.kills)}`,
       ].join('\n'),

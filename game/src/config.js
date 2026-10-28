@@ -16,13 +16,14 @@ export const SQUAD = {
   moveSpeed: 1500, // px/s the squad slides toward the finger
   spacing: 22, // formation density: radius grows with spacing * sqrt(count)
   maxVisible: 60, // soldiers drawn; the count can go higher
+  maxCount: 150, // gates and rescues can't push the squad past this
 };
 
 export const WEAPON = {
   bulletSpeed: 1100,
   baseShotsPerSec: 2,
   shotsPerSoldier: 0.5,
-  maxSoldiersFiring: 60,
+  maxSoldiersFiring: 150,
   // Damage per bullet = 1 + damagePerLevel * (level - 1)
   damagePerLevel: 0.5,
 };
@@ -56,8 +57,61 @@ export const SCORE = {
   enemy: 10,
   block: 50,
   capsule: 25,
+  bossPerStage: 500,
   perMetre: 1,
 };
+
+// Each stage is a timed run, then a boss. Beating the boss starts the next stage.
+export const STAGE = {
+  runSeconds: 40,
+  clearPause: 3, // calm seconds after a boss before the next stage starts
+};
+
+export const BOSS = {
+  radius: 62,
+  speed: 70, // on top of the scroll speed, until it reaches the squad
+  steer: 60,
+  hitInterval: 0.3, // seconds between hits while it is standing on the squad
+  crush: (stage) => stage, // soldiers lost per hit
+  hp: (stage) => Math.round(300 * stage ** 1.5),
+  rescue: (stage) => 3 + 2 * stage, // soldiers freed when it falls
+};
+
+// A pair of gates spans the road; the squad goes through whichever half it is on.
+export const GATE = {
+  first: 7,
+  every: 11,
+  height: 96,
+  clearance: 1.6, // seconds kept free of jars and ice around a gate
+};
+
+// Options for one gate pair at time t. rng returns [0, 1).
+export function gateOptions(t, rng) {
+  const small = 4 + Math.floor(t / 8) + Math.floor(rng() * 5);
+  const good = [{ op: '+', n: small }];
+  if (t > 20 && rng() < 0.35) good.push({ op: '×', n: 2 });
+  if (t > 60 && rng() < 0.1) good.push({ op: '×', n: 3 });
+  const bad = [{ op: '−', n: 3 + Math.floor(t / 8) + Math.floor(rng() * 5) }];
+  if (t > 30) bad.push({ op: '÷', n: 2 });
+
+  const pick = (list) => list[Math.floor(rng() * list.length)];
+  // Mostly a good-or-bad choice; sometimes two good gates of different kinds.
+  const pair = rng() < 0.65 || good.length < 2 ? [pick(good), pick(bad)] : [good[0], good[1]];
+  return rng() < 0.5 ? pair : [pair[1], pair[0]];
+}
+
+export function applyGate(count, { op, n }) {
+  let next = count;
+  if (op === '+') next = count + n;
+  else if (op === '−') next = count - n;
+  else if (op === '×') next = count * n;
+  else if (op === '÷') next = Math.ceil(count / n);
+  return clampCount(next);
+}
+
+export function clampCount(n) {
+  return Math.min(Math.max(n, 0), SQUAD.maxCount);
+}
 
 // px of scroll per metre shown in the HUD.
 export const PX_PER_METRE = 20;

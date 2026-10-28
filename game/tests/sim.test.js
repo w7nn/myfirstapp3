@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ROAD, ROAD_CENTER, SQUAD, SCORE, BLOCK_CRUSH, difficulty } from '../src/config.js';
+import {
+  ROAD, ROAD_CENTER, SQUAD, SCORE, BLOCK_CRUSH, STAGE, BOSS, difficulty, applyGate, gateOptions,
+} from '../src/config.js';
 import { Sim, formationSlot, squadRadius, bulletDamage, shotsPerSecond } from '../src/sim.js';
 import { formatNumber } from '../src/format.js';
 
@@ -164,4 +166,101 @@ test('numbers format with suffixes', () => {
   assert.equal(formatNumber(12_340), '12.3K');
   assert.equal(formatNumber(100_000), '100K');
   assert.equal(formatNumber(999_999), '1M');
+});
+
+test('gate maths, clamped to the squad limit', () => {
+  assert.equal(applyGate(10, { op: '+', n: 5 }), 15);
+  assert.equal(applyGate(10, { op: '−', n: 4 }), 6);
+  assert.equal(applyGate(3, { op: '−', n: 9 }), 0);
+  assert.equal(applyGate(10, { op: '×', n: 2 }), 20);
+  assert.equal(applyGate(9, { op: '÷', n: 2 }), 5);
+  assert.equal(applyGate(SQUAD.maxCount - 1, { op: '×', n: 3 }), SQUAD.maxCount);
+});
+
+test('the squad goes through the gate on its side of the road', () => {
+  const left = quietSim();
+  left.squad.x = ROAD_CENTER - 100;
+  left.spawnGates(SQUAD.y - 5, [{ op: '+', n: 10 }, { op: '−', n: 3 }]);
+  left.step(1 / 30, left.squad.x);
+  assert.equal(left.squad.count, SQUAD.startCount + 10);
+
+  const right = quietSim();
+  right.squad.x = ROAD_CENTER + 100;
+  right.spawnGates(SQUAD.y - 5, [{ op: '+', n: 10 }, { op: '−', n: 3 }]);
+  right.step(1 / 30, right.squad.x);
+  assert.equal(right.squad.count, SQUAD.startCount - 3);
+  const passed = right.drainEvents().find((e) => e.type === 'gatePassed');
+  assert.equal(passed.side, 1);
+  assert.equal(passed.change, -3);
+
+  right.step(1 / 30, right.squad.x);
+  assert.equal(right.squad.count, SQUAD.startCount - 3, 'a gate only applies once');
+});
+
+test('a bad gate can wipe out the squad', () => {
+  const sim = quietSim();
+  sim.squad.x = ROAD_CENTER - 100;
+  sim.spawnGates(SQUAD.y - 5, [{ op: '−', n: 99 }, { op: '+', n: 1 }]);
+  sim.step(1 / 30, sim.squad.x);
+  assert.equal(sim.over, true);
+});
+
+test('gate pairs always offer two valid options', () => {
+  const rng = seeded(3);
+  for (let t = 0; t < 300; t += 7) {
+    const options = gateOptions(t, rng);
+    assert.equal(options.length, 2);
+    for (const o of options) {
+      assert.ok(['+', '−', '×', '÷'].includes(o.op));
+      assert.ok(Number.isInteger(o.n) && o.n > 0);
+    }
+  }
+});
+
+test('the boss arrives after the stage run and stops other spawns', () => {
+  const sim = new Sim({ rng: seeded(5) });
+  sim.squad.count = 150;
+  let incoming = false;
+  while (!incoming && sim.time < STAGE.runSeconds + 1) {
+    sim.step(1 / 60, sim.squad.x);
+    incoming = sim.drainEvents().some((e) => e.type === 'bossIncoming');
+  }
+  assert.ok(incoming);
+  assert.equal(sim.phase, 'boss');
+  assert.equal(sim.stageProgress, 1);
+  assert.equal(sim.boss.hp, BOSS.hp(1));
+
+  sim.enemies = [];
+  sim.boss.hp = 1e9; // keep it alive while we watch the spawners
+  run(sim, 2);
+  assert.equal(sim.enemies.length, 0);
+});
+
+test('a boss standing on the squad keeps crushing soldiers', () => {
+  const sim = quietSim();
+  sim.squad.count = 20;
+  sim.weaponLevel = 1;
+  sim.phase = 'boss';
+  sim.spawnBoss(SQUAD.y - 40).hp = 1e9;
+  run(sim, 1);
+  assert.ok(sim.boss.onSquad);
+  assert.ok(sim.squad.count <= 20 - 3, `count ${sim.squad.count}`);
+});
+
+test('beating the boss rescues soldiers, scores, and starts the next stage', () => {
+  const sim = quietSim();
+  sim.phase = 'boss';
+  sim.spawnBoss(600).hp = 1;
+  run(sim, 0.5);
+  assert.equal(sim.boss, null);
+  assert.equal(sim.phase, 'clear');
+  assert.equal(sim.squad.count, SQUAD.startCount + BOSS.rescue(1));
+  assert.ok(sim.score >= SCORE.bossPerStage);
+  const defeated = sim.drainEvents().find((e) => e.type === 'bossDefeated');
+  assert.equal(defeated.stage, 1);
+
+  run(sim, STAGE.clearPause + 0.1);
+  assert.equal(sim.stage, 2);
+  assert.equal(sim.phase, 'run');
+  assert.ok(sim.drainEvents().some((e) => e.type === 'stageStarted' && e.stage === 2));
 });
